@@ -136,6 +136,8 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
 
   private qualityOptions: QualityOption[] = []
 
+  private captionOptions: CaptionTrackOption[] = []
+
   private selectedQuality: number | 'auto' = 'auto'
 
   private selectedCaption: string | 'off' = 'off'
@@ -156,8 +158,8 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
     this.container = this.resolveContainer(options.container)
     this.elements = this.mount()
     this.bindCoreEvents()
-
-    this.configureCaptions((options.captions ?? DEFAULT_OPTIONS.captions))
+    this.captionOptions = [...(options.captions ?? DEFAULT_OPTIONS.captions)]
+    this.configureCaptions(this.captionOptions)
 
     void this.load(options.source).then(() => {
       const startTime = options.startTime ?? 0
@@ -299,8 +301,17 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
     const label =
       caption === 'off'
         ? 'Off'
-        : this.options.captions?.find((item) => item.srclang === caption)?.label ?? caption
+        : this.captionOptions.find((item) => item.srclang === caption)?.label ?? caption
+    this.forceCaptionReflow()
     this.emit('captionchange', { caption, label })
+  }
+
+  setCaptions(captions: CaptionTrackOption[], preferredCaption?: string | 'off'): void {
+    this.captionOptions = [...captions]
+    if (preferredCaption) {
+      this.selectedCaption = preferredCaption
+    }
+    this.configureCaptions(this.captionOptions)
   }
 
   getQualityOptions(): QualityOption[] {
@@ -606,6 +617,7 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
 
     on(video, 'timeupdate', () => {
       this.refreshProgressUi()
+      this.refreshVisibleCaptionLine()
       this.emit('timeupdate', this.getState())
     })
 
@@ -723,6 +735,15 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
       video.append(track)
       const onTrackLoad = (): void => {
         this.applyCaptionLine(track.track, this.getCaptionLineForCurrentUi())
+
+        const textTrack = track.track
+        if (textTrack) {
+          const onCueChange = (): void => {
+            this.applyCaptionLine(textTrack, this.getCaptionLineForCurrentUi())
+          }
+          textTrack.addEventListener('cuechange', onCueChange)
+          this.teardownStack.push(() => textTrack.removeEventListener('cuechange', onCueChange))
+        }
       }
       track.addEventListener('load', onTrackLoad)
       this.teardownStack.push(() => track.removeEventListener('load', onTrackLoad))
@@ -773,9 +794,21 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
     }
   }
 
+  private forceCaptionReflow(): void {
+    const tracks = this.elements.video.textTracks
+    for (let i = 0; i < tracks.length; i += 1) {
+      const track = tracks[i]
+      if (track.mode === 'showing') {
+        track.mode = 'hidden'
+        track.mode = 'showing'
+      }
+    }
+  }
+
   private setControlsIdle(isIdle: boolean): void {
     this.elements.root.classList.toggle('is-idle', isIdle)
     this.refreshVisibleCaptionLine()
+    this.forceCaptionReflow()
   }
 
   private async attachHlsSource(src: string): Promise<void> {

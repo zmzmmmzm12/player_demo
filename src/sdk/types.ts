@@ -80,6 +80,7 @@ export type StreamPlayerHandle = {
   setPlaybackRate: (rate: number) => void
   setQuality: (quality: number | 'auto') => void
   setCaptionLanguage: (caption: string | 'off') => void
+  setCaptions: (captions: CaptionTrackOption[], preferredCaption?: string | 'off') => void
   getQualityOptions: () => QualityOption[]
   getState: () => StreamPlayerPublicState
   on: <T extends PlayerEvents>(

@@ -30,7 +30,7 @@ yarn build:sdk
   window.addEventListener('DOMContentLoaded', () => {
     const { Player } = window;
 
-    new Player({
+    const player = new Player({
       url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
       container: '.xshow-contents-player',
       thumbnailSrc: '',
@@ -40,11 +40,21 @@ yarn build:sdk
         { label: 'English', srclang: 'en', src: '/captions/demo.en.vtt' },
       ],
       events: {
-        ready: function (_e, video) {
-          console.log('ready duration:', video?.duration);
+        ready: function (_e, info, element) {
+          console.log('ready duration:', info?.duration);
+          console.log('video element:', element);
         },
       },
     });
+
+    // xshow-ui-admin 방식과 동일: 실시간 자막 교체
+    player.setSubtitle([
+      { language: 'ko', url: '/captions/demo.ko.vtt', primary: true, label: '한국어' },
+    ]);
+
+    // 언어만 즉시 전환
+    // off | ko | en ...
+    player.setCaptionLanguage('en');
   });
 </script>
 ```
