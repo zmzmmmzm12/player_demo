@@ -1,77 +1,56 @@
-# React + TypeScript + Vite
+# Stream HLS Player SDK Demo
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+`hls.js` 기반 커스텀 영상 플레이어 SDK입니다.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+yarn install --ignore-engines
+yarn dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Build (Single JS)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+yarn build:sdk
 ```
-# player_demo
-# player_demo
+
+생성 파일:
+
+- `dist-sdk/player.umd.js`
+
+이 파일 하나만 다른 프로젝트로 가져가면 됩니다.
+
+## Usage (xshow-hls-player-sdk 스타일 호환)
+
+```html
+<div class="xshow-contents-player"></div>
+<script src="%PUBLIC_URL%/player.umd.js" defer></script>
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    const { Player } = window;
+
+    new Player({
+      url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+      container: '.xshow-contents-player',
+      thumbnailSrc: '',
+      wrapper: 'xcast-custom-player-root',
+      subtitle: [
+        { label: '한국어', srclang: 'ko', src: '/captions/demo.ko.vtt', default: true },
+        { label: 'English', srclang: 'en', src: '/captions/demo.en.vtt' },
+      ],
+      events: {
+        ready: function (_e, video) {
+          console.log('ready duration:', video?.duration);
+        },
+      },
+    });
+  });
+</script>
+```
+
+## Notes
+
+- `dist`는 데모 앱 번들입니다.
+- 다른 프로젝트에서 재사용할 SDK는 `dist-sdk/player.umd.js`를 사용하세요.
+- 자막(`subtitle`)에 넣는 `.vtt` 파일은 사용하는 프로젝트에서 별도 경로로 제공해야 합니다.

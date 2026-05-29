@@ -1,0 +1,13 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.200
+Hello. This is the Stream player caption demo.
+
+00:00:04.200 --> 00:00:08.700
+You can switch subtitle languages from the CC menu.
+
+00:00:08.700 --> 00:00:13.500
+Mute now drops the volume to zero and stores your last value.
+
+00:00:13.500 --> 00:00:18.200
+Unmute restores that previous volume automatically.
