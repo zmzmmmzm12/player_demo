@@ -148,6 +148,8 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
 
   private destroyed = false
 
+  private loadSequence = 0
+
   private readonly listeners = new Map<PlayerEvents, Set<EventHandler<PlayerEvents>>>()
 
   private readonly teardownStack: Array<() => void> = []
@@ -161,16 +163,22 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
     this.captionOptions = [...(options.captions ?? DEFAULT_OPTIONS.captions)]
     this.configureCaptions(this.captionOptions)
 
-    void this.load(options.source).then(() => {
-      const startTime = options.startTime ?? 0
-      if (startTime > 0) {
-        this.seekTo(startTime)
-      }
-      if (options.autoplay) {
-        void this.play()
-      }
-      this.emit('ready', undefined)
-    })
+    void this.load(options.source)
+      .then(() => {
+        if (this.destroyed) {
+          return
+        }
+
+        const startTime = options.startTime ?? 0
+        if (startTime > 0) {
+          this.seekTo(startTime)
+        }
+        if (options.autoplay) {
+          void this.play()
+        }
+        this.emit('ready', undefined)
+      })
+      .catch(() => undefined)
   }
 
   static create(options: StreamPlayerOptions): StreamHlsPlayer {
@@ -178,26 +186,43 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
   }
 
   async load(sourceInput: string | StreamPlayerSource): Promise<void> {
-    this.clearError()
-    this.showLoading(true)
-
-    const source = normalizeSource(sourceInput)
-    this.teardownHls()
-
-    const { video } = this.elements
-    video.pause()
-    video.removeAttribute('src')
-    video.load()
-
-    const shouldUseHls = guessIsHls(source)
-    if (shouldUseHls) {
-      await this.attachHlsSource(source.src)
-    } else {
-      video.src = source.src
+    if (this.destroyed) {
+      return
     }
 
-    this.setStateFromOptions()
-    this.refreshUi()
+    const loadId = this.nextLoadId()
+    try {
+      this.clearError()
+      this.showLoading(true)
+
+      const source = normalizeSource(sourceInput)
+      this.teardownHls()
+
+      const { video } = this.elements
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+
+      const shouldUseHls = guessIsHls(source)
+      if (shouldUseHls) {
+        await this.attachHlsSource(source.src, loadId)
+      } else {
+        video.src = source.src
+      }
+
+      if (!this.isCurrentLoad(loadId)) {
+        return
+      }
+
+      this.setStateFromOptions()
+      this.refreshUi()
+    } catch (error) {
+      if (this.isCurrentLoad(loadId)) {
+        this.showLoading(false)
+        this.showError(error instanceof Error ? error.message : '스트림을 불러오지 못했습니다.', error)
+      }
+      throw error
+    }
   }
 
   async play(): Promise<void> {
@@ -352,6 +377,7 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
       return
     }
     this.destroyed = true
+    this.nextLoadId()
 
     if (this.hideUiTimer) {
       window.clearTimeout(this.hideUiTimer)
@@ -666,6 +692,15 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
       this.refreshBufferedUi()
     })
 
+    on(video, 'error', () => {
+      if (video.error?.code === MediaError.MEDIA_ERR_ABORTED) {
+        return
+      }
+
+      this.showLoading(false)
+      this.showError(this.getMediaErrorMessage(), video.error ?? undefined)
+    })
+
     on(video, 'volumechange', () => {
       if (video.volume > 0) {
         this.previousVolume = video.volume
@@ -811,34 +846,38 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
     this.forceCaptionReflow()
   }
 
-  private async attachHlsSource(src: string): Promise<void> {
+  private async attachHlsSource(src: string, loadId: number): Promise<void> {
     const { video } = this.elements
 
     if (Hls.isSupported()) {
-      this.hls = new Hls({
+      const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
       })
+      this.hls = hls
 
-      this.hls.on(Events.ERROR, (_event, data: ErrorData) => {
-        if (data.fatal) {
+      hls.on(Events.ERROR, (_event, data: ErrorData) => {
+        if (data.fatal && this.isCurrentLoad(loadId)) {
+          this.showLoading(false)
           this.showError(`스트림 재생 오류: ${data.type}`, data)
         }
       })
 
-      this.hls.on(Events.MANIFEST_PARSED, () => {
-        this.updateQualityOptions()
+      hls.on(Events.MANIFEST_PARSED, () => {
+        if (this.isCurrentLoad(loadId)) {
+          this.updateQualityOptions()
+        }
       })
 
-      this.hls.on(Events.LEVEL_SWITCHED, (_event, data: { level: number }) => {
-        if (this.selectedQuality === 'auto') {
+      hls.on(Events.LEVEL_SWITCHED, (_event, data: { level: number }) => {
+        if (this.selectedQuality === 'auto' && this.isCurrentLoad(loadId)) {
           const label = this.qualityOptions.find((item) => item.index === data.level)?.label ?? 'Auto'
           this.emit('qualitychange', { quality: 'auto', label: `Auto (${label})` })
         }
       })
 
-      this.hls.attachMedia(video)
-      this.hls.loadSource(src)
+      hls.attachMedia(video)
+      hls.loadSource(src)
       return
     }
 
@@ -847,7 +886,7 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
       return
     }
 
-    this.showError('이 브라우저는 HLS 재생을 지원하지 않습니다.')
+    throw new Error('이 브라우저는 HLS 재생을 지원하지 않습니다.')
   }
 
   private updateQualityOptions(): void {
@@ -953,6 +992,30 @@ export class StreamHlsPlayer implements StreamPlayerHandle {
   private clearError(): void {
     this.elements.errorLayer.classList.add('is-hidden')
     this.elements.errorMessage.textContent = ''
+  }
+
+  private getMediaErrorMessage(): string {
+    switch (this.elements.video.error?.code) {
+      case MediaError.MEDIA_ERR_ABORTED:
+        return '동영상 로드가 취소되었습니다.'
+      case MediaError.MEDIA_ERR_NETWORK:
+        return '네트워크 문제로 동영상을 불러오지 못했습니다.'
+      case MediaError.MEDIA_ERR_DECODE:
+        return '동영상 디코딩 중 오류가 발생했습니다.'
+      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+        return '지원하지 않는 동영상 형식이거나 접근할 수 없는 주소입니다.'
+      default:
+        return '동영상을 불러오지 못했습니다.'
+    }
+  }
+
+  private nextLoadId(): number {
+    this.loadSequence += 1
+    return this.loadSequence
+  }
+
+  private isCurrentLoad(loadId: number): boolean {
+    return !this.destroyed && this.loadSequence === loadId
   }
 
   private startUiHideTimer(): void {

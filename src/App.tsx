@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { createStreamPlayer, type StreamPlayerHandle } from './sdk'
+import { createStreamPlayer, type StreamPlayerHandle, type StreamPlayerPublicState } from './sdk'
 
 const DEMO_STREAMS = [
   {
@@ -18,18 +18,50 @@ const DEMO_STREAMS = [
   },
 ]
 
+const PLAYER_CAPTIONS = [
+  { label: '한국어', srclang: 'ko', src: '/captions/demo.ko.vtt', default: true },
+  { label: 'English', srclang: 'en', src: '/captions/demo.en.vtt' },
+  { label: '日本語', srclang: 'ja', src: '/captions/demo.ja.vtt' },
+]
+
+const SHORTCUTS = ['Space/K: 재생', '←/→: 5초 이동', 'M: 음소거', 'F: 전체화면']
+const INITIAL_PLAYBACK_TIME = '00:00 / 00:00'
+const INITIAL_STREAM_URL = DEMO_STREAMS[0].url
+
+type PlayerStatus =
+  | { type: 'ready' }
+  | { type: 'loading' }
+  | { type: 'playing' }
+  | { type: 'paused' }
+  | { type: 'error'; message: string }
+
+function toTimeText(seconds: number) {
+  if (!Number.isFinite(seconds)) return '00:00'
+  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
+  const ss = String(Math.floor(seconds % 60)).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
+function toPlaybackTimeText(state: Pick<StreamPlayerPublicState, 'currentTime' | 'duration'>) {
+  return `${toTimeText(state.currentTime)} / ${toTimeText(state.duration)}`
+}
+
+function toStatusText(status: PlayerStatus) {
+  if (status.type === 'error') {
+    return `error: ${status.message}`
+  }
+  return status.type
+}
+
 function App() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<StreamPlayerHandle | null>(null)
+  const pendingLoadIdRef = useRef(0)
+  const isLoadingRef = useRef(false)
 
-  const [streamUrl, setStreamUrl] = useState(DEMO_STREAMS[0].url)
-  const [status, setStatus] = useState('ready')
-  const [time, setTime] = useState('00:00 / 00:00')
-
-  const shortcuts = useMemo(
-    () => ['Space/K: 재생', '←/→: 5초 이동', 'M: 음소거', 'F: 전체화면'],
-    [],
-  )
+  const [streamUrl, setStreamUrl] = useState(INITIAL_STREAM_URL)
+  const [status, setStatus] = useState<PlayerStatus>({ type: 'ready' })
+  const [time, setTime] = useState(INITIAL_PLAYBACK_TIME)
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -38,12 +70,8 @@ function App() {
 
     const player = createStreamPlayer({
       container: containerRef.current,
-      source: streamUrl,
-      captions: [
-        { label: '한국어', srclang: 'ko', src: '/captions/demo.ko.vtt', default: true },
-        { label: 'English', srclang: 'en', src: '/captions/demo.en.vtt' },
-        { label: '日本語', srclang: 'ja', src: '/captions/demo.ja.vtt' },
-      ],
+      source: INITIAL_STREAM_URL,
+      captions: PLAYER_CAPTIONS,
       autoplay: false,
       muted: false,
       controlsAutoHideMs: 1800,
@@ -53,19 +81,17 @@ function App() {
 
     playerRef.current = player
 
-    const unready = player.on('ready', () => setStatus('ready'))
-    const unplay = player.on('play', () => setStatus('playing'))
-    const unpause = player.on('pause', () => setStatus('paused'))
-    const unerror = player.on('error', (event) => setStatus(`error: ${event.message}`))
-    const untime = player.on('timeupdate', (state) => {
-      const toText = (seconds: number) => {
-        if (!Number.isFinite(seconds)) return '00:00'
-        const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-        const ss = String(Math.floor(seconds % 60)).padStart(2, '0')
-        return `${mm}:${ss}`
+    const setPlaybackStatus = (nextStatus: PlayerStatus) => {
+      if (!isLoadingRef.current) {
+        setStatus(nextStatus)
       }
-      setTime(`${toText(state.currentTime)} / ${toText(state.duration)}`)
-    })
+    }
+
+    const unready = player.on('ready', () => setPlaybackStatus({ type: 'ready' }))
+    const unplay = player.on('play', () => setPlaybackStatus({ type: 'playing' }))
+    const unpause = player.on('pause', () => setPlaybackStatus({ type: 'paused' }))
+    const unerror = player.on('error', (event) => setStatus({ type: 'error', message: event.message }))
+    const untime = player.on('timeupdate', (state) => setTime(toPlaybackTimeText(state)))
 
     return () => {
       unready()
@@ -75,6 +101,7 @@ function App() {
       untime()
       player.destroy()
       playerRef.current = null
+      isLoadingRef.current = false
     }
   }, [])
 
@@ -84,9 +111,28 @@ function App() {
       return
     }
 
-    setStatus('loading')
-    await playerRef.current.load(streamUrl)
-    setStatus('ready')
+    const loadId = pendingLoadIdRef.current + 1
+    pendingLoadIdRef.current = loadId
+    isLoadingRef.current = true
+    setStatus({ type: 'loading' })
+
+    try {
+      await playerRef.current.load(streamUrl)
+      if (pendingLoadIdRef.current === loadId) {
+        setStatus({ type: 'ready' })
+      }
+    } catch (error) {
+      if (pendingLoadIdRef.current === loadId) {
+        setStatus({
+          type: 'error',
+          message: error instanceof Error ? error.message : '스트림을 불러오지 못했습니다.',
+        })
+      }
+    } finally {
+      if (pendingLoadIdRef.current === loadId) {
+        isLoadingRef.current = false
+      }
+    }
   }
 
   return (
@@ -124,7 +170,7 @@ function App() {
         <div className="meta-grid">
           <div>
             <strong>Status</strong>
-            <p>{status}</p>
+            <p>{toStatusText(status)}</p>
           </div>
           <div>
             <strong>Playback</strong>
@@ -132,7 +178,7 @@ function App() {
           </div>
           <div>
             <strong>Keyboard</strong>
-            <p>{shortcuts.join(' · ')}</p>
+            <p>{SHORTCUTS.join(' · ')}</p>
           </div>
         </div>
       </section>

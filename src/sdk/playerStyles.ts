@@ -217,9 +217,12 @@ export const PLAYER_STYLES = `
   opacity: 0;
 }
 
-.stream-player,
-.stream-player * {
-  outline: none !important;
+.stream-btn:focus-visible,
+.stream-select:focus-visible,
+.stream-range:focus-visible,
+.stream-player:focus-visible {
+  outline: 2px solid var(--stream-accent);
+  outline-offset: 2px;
 }
 
 @keyframes stream-spin {
